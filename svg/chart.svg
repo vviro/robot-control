@@ -1,0 +1,9 @@
+<svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" onload="init(evt)">
+  <script type="text/ecmascript" xlink:href="ajaxRequest.js"/>
+  <script type="text/ecmascript" xlink:href="realTimeChart.js"/>
+  <a xlink:href="http://www.cristiandarie.ro/ajax-php/">
+    <text x="200" y="20">
+      SVG with AJAX and PHP Demo
+    </text>
+  </a>
+</svg>
