@@ -1,0 +1,1 @@
+g++ fcgi-test.cpp FCgiIO.cpp -lSlave -lXmlRpc -lcgicc -lfcgi++ -I/usr/realtime/include -L/usr/realtime/lib  -o test.fcgi 

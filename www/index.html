@@ -1,0 +1,68 @@
+<html>
+<head>
+	<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.3.2/jquery.min.js"></script>
+	<style type="text/css"> 
+		#error_msg {font-color:red;}
+	</style>
+</head>
+
+
+<body>
+
+<H3>
+	XMLRPC CGI Interface
+</H3>
+
+<H4>
+	TASK Manager
+</H4>
+
+
+<P>
+
+
+<form id="control_form" method="post" action="/fcgi/test.fcgi">
+
+Node IPaddr : <input type="text" name="node" value="10.0.9.21" /><br/>
+Port Number: <input type="text" name="port" value="29500" /><br />
+Action: <select name="action">
+		<option value="connect" selected>Connect</option>
+		<option value="disconnect">Disconnect</option>
+	</select>
+	<input type="hidden" name="state" value="not_connected">
+	<input type="button" id="control_submit" value="Go">
+
+</form>
+</P>
+State: <div id="connected">Not connected</div>
+<p>
+<div id="error_msg"></div>
+
+<script>
+$(document).ready(function () {
+	$('#control_submit').click(function(){
+		var url = "/fcgi/test.fcgi";
+		var node = $('#control_form > [name="node"]').val();
+		var port = $('#control_form > [name="port"]').val();
+		var action = $('#control_form > [name="action"]').val();
+		var state = $('#control_form > [name="state"]').val();
+		$.post(url, {node:node, port:port, action:action, state:state}, function(data){
+			if ($("error",data)) {
+				$("#error_msg").val($("error",data));
+				} else {
+				$("#error_msg").empty();
+			}
+			if ($("success",data)) {
+				$("#connected").html("Connected");
+				} else {
+				$("#connected").html("Not connected.");
+			}
+		}, "xml");
+	});
+
+});
+</script>
+
+</body>
+</html>
+
