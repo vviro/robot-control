@@ -1,8 +1,35 @@
 <html>
 <head>
 	<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.3.2/jquery.min.js"></script>
+	<script src="js/jquery.xml2json.js"></script>
 	<style type="text/css"> 
 		#error_msg {font-color:red;}
+		#control_form {
+		    width: 300px;
+		}
+		#control_form .label {
+		    width:180px;
+		    float:left;
+		}
+		#control_form .server-param {
+		    width:100px;
+		    float:right;
+		}
+		#control_submit {
+		    float:right;
+		    margin-top:10px;
+		    margin-bottom:10px;
+		}
+		#connection_status {
+		    width:200px;
+		    clear:both;
+		}
+		#connection_status a {
+		    float:left;
+		}
+		#connected {
+		    float:right;
+		}
 	</style>
 </head>
 
@@ -23,22 +50,26 @@
 
 <form id="control_form" method="post" action="/fcgi/test.fcgi">
 
-Node IPaddr : <input type="text" name="node" value="10.0.9.21" /><br/>
-Port Number: <input type="text" name="port" value="29500" /><br />
-Action: <select name="action">
-		<option value="connect" selected>Connect</option>
-		<option value="disconnect">Disconnect</option>
-	</select>
+<div class="label">Node IPaddr:</div> <input class="server-param" type="text" name="node" value="10.0.9.21" /><br/>
+<div class="label">Port Number:</div> <input class="server-param" type="text" name="port" value="29500" /><br />
+	<input type="hidden" name="action" value="connect">
 	<input type="hidden" name="state" value="not_connected">
-	<input type="button" id="control_submit" value="Go">
+	<input type="button" id="control_submit" value="connect">
 
 </form>
 </P>
-State: <div id="connected">Not connected</div>
+
+<div id="connection_status"><a>State:</a><div id="connected">Not connected</div></div>
 <p>
 <div id="error_msg"></div>
+<div id="conn_info"></div>
 
 <script>
+
+function is_array(input){
+	return typeof(input)=='object';
+}
+
 $(document).ready(function () {
 	$('#control_submit').click(function(){
 		var url = "/fcgi/test.fcgi";
@@ -46,23 +77,86 @@ $(document).ready(function () {
 		var port = $('#control_form > [name="port"]').val();
 		var action = $('#control_form > [name="action"]').val();
 		var state = $('#control_form > [name="state"]').val();
-		$.post(url, {node:node, port:port, action:action, state:state}, function(data){
-			if ($("error",data)) {
-				$("#error_msg").val($("error",data));
+		$.post(url, {node:node, port:port, action:action, state:state}, function(xml){
+			var data = $.xml2json(xml);
+			if (data.error) {
+				$("#error_msg").val(data.error);
 				} else {
 				$("#error_msg").empty();
 			}
-			if ($("success",data)) {
+			if (data.success == "1") {
 				$("#connected").html("Connected");
+				$("#control_submit").val("disconnect");
+				$("#control_form > input[name='action']").val("disconnect");
 				} else {
-				$("#connected").html("Not connected.");
+				$("#connected").html("Not connected");
+				$("#control_submit").val("connect");
+				$("#control_form > input[name='action']").val("connect");
 			}
+			
+			if (data.connectioninfo) {
+			    print_struct_info(data.connectioninfo.value.struct);
+			}
+			if (data.structure) {
+			    print_structure_info(data.structure);
+			}
+			
+			
 		}, "xml");
 	});
 
+	function print_structure_info( structure ) {
+		values = structure.value.array.data.value;
+	
+		for (vs in values) {
+			print_struct_info( values[vs].struct );
+		}
+		$('#conn_info').append($("<input type='button' value='update parameters'>"));
+	}
+	
+	function print_struct_info( struct ) {
+		ms = struct.member;
+		var numval;
+		var varname;
+		for (m in ms) {
+			name = ms[m].name;
+			if (is_array(ms[m].value)) {
+				for (w in ms[m].value)
+				    v = ms[m].value[w];
+			} else {
+				v = ms[m].value;
+			}
+			if (name == "str") {
+				varname = v;
+			} else if (name == "state" || name == "port" || name == "d") {} 
+			else {
+				numval = v;
+			}
+		}
+		if (numval)
+			$("#conn_info").append( $("<div class='var'>").append( $("<a>").html(varname+": "))
+			    .append( $("<input type='text'>").val(numval).attr('name',varname) ) ).append( $("<br>") );
+	}
+	
 });
 </script>
-
+<style>
+    .var{
+	width:140px;
+	clear:both;
+    }
+    .var input {
+	float:right;
+	width:30px;
+	text-align:right;
+    }
+    .var a {
+	float:left
+    }
+    .var button {
+	padding-top:10px;
+    }
+</style>
 </body>
 </html>
 

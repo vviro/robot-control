@@ -39,7 +39,9 @@
 #include "FCgiIO.h"
 
 #include <boost/algorithm/string.hpp>
+#include <boost/algorithm/string/regex.hpp>
 #include <boost/lexical_cast.hpp>
+#include <boost/regex.hpp>
 
 using namespace boost;
 using boost::lexical_cast;
@@ -81,24 +83,32 @@ bool connect(string server, int port)
 
 bool get_data_structure( string server, string connection_id, FCgiIO * IO ) 
 {
+try {
 	XmlRpcValue noArgs, resultM, resultT, result;
 
 	XmlRpcClient ct(server.c_str(), 29501);
 	noArgs.clear();
 	noArgs[0] = connection_id;
-	if (ct.execute("tConnect", noArgs, resultT))
-		*IO << "<connection_info>" << resultT << "</connection_info>" << "\n";
+
+	if (ct.execute("tConnect", noArgs, resultM)) {
+		*IO << "<connectioninfo>" << resultM.toXml() << "</connectioninfo>";
+	}
 	else {
 		std::cout << "Error calling 'tConnect'\n\n";
 		return false;
 	}
-	if (ct.execute("Get_Signal_Structure", noArgs, resultT))
-		*IO << "<structure>" << resultT << "</structure>\n";
-	 
+
+	if (ct.execute("Get_Signal_Structure", noArgs, resultT)) {
+		*IO << "<structure>" << resultT.toXml() << "</structure>";
+	}
 	else {
 		std::cout << "Error calling 'tConnect'\n\n";
 		return false;
   	}
+}
+catch (exception &e) {
+	*IO << e.what() << endl;
+}
 	return true;
 }
 
@@ -133,16 +143,16 @@ void dispatch(Cgicc * CGI, FCgiIO * IO )
 
 				bool s = connect( (**node).c_str(), lexical_cast<int>((**port).c_str()) );
 				if (s)
-					*IO << "<success>" << 1 << "</success>" << endl;
+					*IO << "<success>" << 1 << "</success>";
 				else
-					*IO << "<success>" << 0 << "</success>" << endl;
+					*IO << "<success>" << 0 << "</success>";
 
 				if (s)
 					bool s2 = get_data_structure( string(**node), state.connection_id, IO );
 			}
 			else
 			{
-				*IO << "<success>" << 1 << "</success>" << endl;
+				*IO << "<success>" << 1 << "</success>";
 			}
 		} else
 		{
@@ -150,7 +160,7 @@ void dispatch(Cgicc * CGI, FCgiIO * IO )
 		}
 	}
 	if (error.length() > 0) {
-		*IO << "<error>" << error << "</error>" << endl;		
+		*IO << "<error>" << error << "</error>";
 	}
 
 }
@@ -163,9 +173,6 @@ void print_header( FCgiIO * IO )
 	*IO << HTTPResponseHeader("HTTP/1.1", 200, "OK")
 		.addHeader("Content-Language", "en")
 		.addHeader("Content-Type", "text/xml");
-
-//	*IO << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" << endl;
-//	*IO << "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"DTD/xhtml1-strict.dtd\">" << endl;
 	*IO << "<r>\n";
 }
 
@@ -181,6 +188,7 @@ main(int /*argc*/,
 const char **/*argv*/,
 char **/*envp*/)
 {
+
 	unsigned count = 0;
 	state.connected = false;
 
