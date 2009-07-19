@@ -1,8 +1,38 @@
 <html>
 <head>
 	<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.3.2/jquery.min.js"></script>
+	<script src="js/jquery.xml2json.js"></script>
+	<script src="js/json2.js"></script>
+	<link rel="stylesheet" type="text/css" href="http://yui.yahooapis.com/combo?2.7.0/build/editor/assets/skins/sam/simpleeditor.css&2.7.0/build/treeview/assets/skins/sam/treeview.css"> 
+	<script type="text/javascript" src="http://yui.yahooapis.com/combo?2.7.0/build/utilities/utilities.js&2.7.0/build/editor/simpleeditor-min.js&2.7.0/build/treeview/treeview-min.js"></script> 
 	<style type="text/css"> 
 		#error_msg {font-color:red;}
+		#control_form {
+		    width: 300px;
+		}
+		#control_form .label {
+		    width:180px;
+		    float:left;
+		}
+		#control_form .server-param {
+		    width:100px;
+		    float:right;
+		}
+		#control_submit {
+		    float:right;
+		    margin-top:10px;
+		    margin-bottom:10px;
+		}
+		#connection_status {
+		    width:200px;
+		    clear:both;
+		}
+		#connection_status a {
+		    float:left;
+		}
+		#connected {
+		    float:right;
+		}
 	</style>
 </head>
 
@@ -23,46 +53,231 @@
 
 <form id="control_form" method="post" action="/fcgi/test.fcgi">
 
-Node IPaddr : <input type="text" name="node" value="10.0.9.21" /><br/>
-Port Number: <input type="text" name="port" value="29500" /><br />
-Action: <select name="action">
-		<option value="connect" selected>Connect</option>
-		<option value="disconnect">Disconnect</option>
-	</select>
+<div class="label">Node IPaddr:</div> <input class="server-param" type="text" name="node" value="10.0.9.21" /><br/>
+<div class="label">Port Number:</div> <input class="server-param" type="text" name="port" value="29500" /><br />
+	<input type="hidden" name="action" value="connect">
 	<input type="hidden" name="state" value="not_connected">
-	<input type="button" id="control_submit" value="Go">
+	<input type="button" id="control_submit" value="connect">
 
 </form>
 </P>
-State: <div id="connected">Not connected</div>
+
+<div id="connection_status"><a>State:</a><div id="connected">Not connected</div></div>
 <p>
 <div id="error_msg"></div>
+<div id="conn_info"></div>
 
 <script>
+
+function is_array(input){
+	return typeof(input)=='object';
+}
+
+var xml;
+var xml_params;
+var changed_parameters = new Object;
+var url = "/fcgi/test.fcgi";
+
 $(document).ready(function () {
+	$("#control_form > input[name='action']").val("connect"); //bugfix to be sure that it's connect, not disconnect 
+
 	$('#control_submit').click(function(){
-		var url = "/fcgi/test.fcgi";
 		var node = $('#control_form > [name="node"]').val();
 		var port = $('#control_form > [name="port"]').val();
 		var action = $('#control_form > [name="action"]').val();
 		var state = $('#control_form > [name="state"]').val();
-		$.post(url, {node:node, port:port, action:action, state:state}, function(data){
-			if ($("error",data)) {
-				$("#error_msg").val($("error",data));
+		$.post(url, {node:node, port:port, action:action, state:state}, function(xml_response){
+			xml = xml_response;
+			xml_params = $(xml).find('parameters');
+			
+			$("#conn_info").empty();
+
+			var data = $.xml2json(xml);
+			if (data.error) {
+				$("#error_msg").val(data.error);
 				} else {
 				$("#error_msg").empty();
 			}
-			if ($("success",data)) {
+			if (data.success == "1") {
 				$("#connected").html("Connected");
+				$("#control_submit").val("disconnect");
+				$("#control_form > input[name='action']").val("disconnect");
 				} else {
-				$("#connected").html("Not connected.");
+				$("#connected").html("Not connected");
+				$("#control_submit").val("connect");
+				$("#control_form > input[name='action']").val("connect");
 			}
+			
+			if (data.connectioninfo) {
+			    print_struct_info(data.connectioninfo.value.struct);
+			}
+			if (data.signalstructure) {
+			    print_structure_info(data.signalstructure);
+		    	}
+			if (data.parameters) {
+			   print_parameters(xml_params);
+			}
+			
 		}, "xml");
 	});
 
+	function print_parameters( xml ) {
+		var task_name;
+		$(xml).find('value > array > data > value:not(:first) > array > data:first').each(function() {
+			var task_raw = $(this).find('value:first').text();
+			var task_array = task_raw.split("/");
+			task_name = task_array[0];
+		});
+
+		$("<div>").attr("id","task_tree").appendTo($("#conn_info"));
+	
+		tree = new YAHOO.widget.TreeView("task_tree");
+		var root = tree.getRoot();
+		var tmpNode1 = new YAHOO.widget.TextNode({label: "Tasks", expanded: false}, root); 
+		var tmpNode2 = new YAHOO.widget.TextNode({label: task_name ,expanded: false, editable:false}, tmpNode1); 
+
+		var var_id = 0;
+		$(xml).find('value > array > data > value:not(:first) > array > data').each(function() {
+			var task_raw = $(this).find('value:first').text();
+			var task_array = task_raw.split("/");
+			var task_name = task_array[0];
+			var blockname = task_array[1];
+			for (i=2 ; i < task_array.length ; i++) {
+				blockname += '/' + task_array[i];
+			}
+			var param_name = $(this).find('value:eq(1)').text();
+			var varname = blockname + " (" + param_name + ")";
+
+			
+			var nout = $(this).find('i4:eq(0)').text();
+			var nin = $(this).find('i4:eq(1)').text();
+			var d = $(this).find('value > array > data > value > double').text();
+
+//			create_tree( task_name );
+//			append_var_to_tree( task_name, varname, d);
+
+			if (blockname) {
+				var tmpNode3 = new YAHOO.widget.TextNode({label: varname, expanded: false}, tmpNode2); 
+				tmpNode3.setNodesProperty('labelStyle','varname');
+				var tmpNode4 = new YAHOO.widget.TextNode({label: d, expanded: false, editable:true}, tmpNode3); 
+				tmpNode4.setNodesProperty('labelStyle','varvalue');
+				var oldSaveValue = tmpNode4.saveEditorValue;
+				var_id = var_id + 1;
+				tmpNode4.saveEditorValue = function(data) {
+					var new_value = $(data.editorPanel).find('.ygtv-input :input').val();
+					mark_as_changed(task_name, var_id, blockname, param_name, d, new_value);
+					oldSaveValue(data);
+				}
+			}
+		});
+		tree.render();
+		tree.subscribe('dblClickEvent',tree.onEventEditNode); 
+	}
+
+	function mark_as_changed(task_name, var_id, blockname, param_name, old_value, new_value) {
+		//		alert(task_name + ' ' + varname + ' ' + old_value + ' ' + new_value);
+		var key = task_name + blockname + param_name;
+		changed_parameters[key] = {task_name:task_name, blockname:blockname, param_name:param_name, old_value:old_value, new_value:new_value};
+	}
+
+	function create_tree( name ) {
+		if ($("#task_"+name).length > 0) {return;}
+		else {
+			$("<div>").attr("id","task").appendTo($("#conn_info"));
+		}
+		if ($("#task_tree").length > 0) {return;}
+		else {
+			$("<div>").attr("id","task_tree").appendTo($("#conn_info"));
+	                tree = new YAHOO.widget.TreeView("task_tree", [
+                        	{type:'Text', label:"Tasks", editable:false, expanded:true, children:[
+                                	{type:'Text', label:name, editable:false}
+        	       	        ]}
+	                ]);
+        	        tree.render();
+			tree.subscribe('dblClickEvent',tree.onEventEditNode); 
+		}
+
+	}
+
+	function append_var_to_tree( task_name, varname, value ) {
+		$("#task_"+task_name).append($("<div class='var'>").append( $("<a>").html(varname+": "))
+			    .append( $("<input type='text'>").val(value).attr('name',varname) ) ).append( $("<br>") );
+
+		var tree = new YAHOO.widget.TreeView("task_tree"); 
+		var tmpNode = tree.getNodeByProperty("label", task_name); 
+		var tmpNode3 = new YAHOO.widget.TextNode({label: varname, expanded: false}, tmpNode); 
+		var tmpNode4 = new YAHOO.widget.TextNode({label: value, expanded: false, editable:true}, tmpNode3); 
+		tree.render(); 	
+	}
+
+	function print_structure_info( structure ) {
+		values = structure.value.array.data.value;
+	
+		for (vs in values) {
+			print_struct_info( values[vs].struct );
+		}
+		$('#conn_info').append($("<input type='button' id='update_params' value='update parameters'>").click(function(){
+			$.post(url, {
+				action:"update",
+				changed_params:format_return_params(changed_parameters)
+			});
+		}));
+	}
+	
+	function format_return_params(cp) {
+		var r = "";
+		for each (var item in cp) {
+			r += "\"" + item.task_name + "\",\"" + item.blockname + "\",\"" + item.param_name + "\",\"" +  item.new_value+ "\"\n";
+		}
+		return r;
+	}
+
+	
+	function print_struct_info( struct ) {
+		ms = struct.member;
+		var numval;
+		var varname;
+		for (m in ms) {
+			name = ms[m].name;
+			if (is_array(ms[m].value)) {
+				for (w in ms[m].value)
+				    v = ms[m].value[w];
+			} else {
+				v = ms[m].value;
+			}
+			if (name == "str") {
+				varname = v;
+			} else if (name == "state" || name == "port" || name == "d") {} 
+			else {
+				numval = v;
+			}
+		}
+		if (numval)
+			$("#conn_info").append( $("<div class='var'>").append( $("<a>").html(varname+": "))
+			    .append( $("<input type='text'>").val(numval).attr('name',varname) ) ).append( $("<br>") );
+	}
+
+
+	
 });
 </script>
-
+<style>
+    .var{
+	width:240px;
+	clear:both;
+    }
+    .var input {
+	float:right;
+	width:70px;
+	text-align:right;
+    }
+    .var a {
+	float:left
+    }
+    .var button {
+	padding-top:10px;
+    }
+</style>
 </body>
 </html>
 
