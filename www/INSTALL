@@ -1,0 +1,2 @@
+change root directory in .htaccess , utils/combine_(css|js).php and snippets/logout.php
+change db settings in inc/sess.inc and inc/db.inc

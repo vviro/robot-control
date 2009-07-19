@@ -1,0 +1,44 @@
+
+response
+	response_hash
+	userlist
+		user
+			username
+			status
+	session
+		messages
+			message
+				sender
+				type
+				content
+		current_game
+			game_status
+			partner
+			round
+				round_hash
+				round_status
+				conditions
+					start_time
+					end_time
+					start_phrase
+					end_phrase
+				results
+					your_solution
+					partner_solution
+					your_score
+					partner_score
+					best_score
+					best_solution
+
+request
+	sync
+		local_timestamp
+	login
+		username
+		password
+	message
+		recepient
+		type
+		content
+	current_game
+		my_solution
