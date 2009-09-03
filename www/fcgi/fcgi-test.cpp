@@ -45,36 +45,206 @@
 #include <boost/tokenizer.hpp>
 #include <boost/smart_ptr.hpp>
 
-using namespace boost;
-using boost::lexical_cast;
+#include <boost/circular_buffer.hpp>
+#include <boost/thread/mutex.hpp>
+#include <boost/thread/condition.hpp>
+#include <boost/thread/thread.hpp>
+#include <boost/progress.hpp>
+#include <boost/bind.hpp>
+#include <deque>
+#include <list>
+#include <string>
 
-using namespace std;
-using namespace cgicc;
-
-using namespace XmlRpc;
-using namespace rtaixml_domain;
+#include <boost/filesystem.hpp>  
+	using namespace boost::filesystem;  
 
 
-enum server_state{
-	CONNECTED = 0x01,
-	UNDEFINED = 0x0f
+	using namespace boost;
+	using boost::lexical_cast;
+
+	using namespace std;
+	using namespace cgicc;
+
+	using namespace XmlRpc;
+	using namespace rtaixml_domain;
+
+
+	const unsigned long QUEUE_SIZE     = 1000L;
+	const unsigned long TOTAL_ELEMENTS = QUEUE_SIZE * 1000L;
+
+	void * ftc; 
+
+		//bounded_buffer<std::string> bb_string(QUEUE_SIZE);
+		//std::cout << "bounded_buffer<std::string> ";
+		//fifo_task_cgi(&bb_string);
+
+
+	enum server_state{
+		CONNECTED = 0x01,
+		UNDEFINED = 0x0f
+	};
+
+	enum error_info{
+		INVALID_PARAMETER = 0x01,
+		TASK_IS_NOT_RUNNING = 0x0f
+	};
+
+	struct state_t
+	{
+		int state;
+		int error;
+		string connection_id;
+		XmlRpcValue * server_params;
+		XmlRpcValue * noArgs;
+		XmlRpcClient * connection_task;
+		XmlRpcClient * connection_server;
+		int t;
+	} state;
+
+template <class T>
+	class bounded_buffer {
+public:
+
+      typedef boost::circular_buffer<T> container_type;
+      typedef typename container_type::size_type size_type;
+      typedef typename container_type::value_type value_type;
+
+      explicit bounded_buffer(size_type capacity) : m_unread(0), m_container(capacity) {}
+
+      void push_front(const value_type& item) {
+         boost::mutex::scoped_lock lock(m_mutex);
+         m_not_full.wait(lock, boost::bind(&bounded_buffer<value_type>::is_not_full, this));
+         m_container.push_front(item);
+         ++m_unread;
+         lock.unlock();
+         m_not_empty.notify_one();
+      }
+
+      void pop_back(value_type* pItem) {
+         boost::mutex::scoped_lock lock(m_mutex);
+         m_not_empty.wait(lock, boost::bind(&bounded_buffer<value_type>::is_not_empty, this));
+         *pItem = m_container[--m_unread];
+         lock.unlock();
+         m_not_full.notify_one();
+      }
+
+private:
+      bounded_buffer(const bounded_buffer&);              // Disabled copy constructor
+      bounded_buffer& operator = (const bounded_buffer&); // Disabled assign operator
+
+      bool is_not_empty() const { return m_unread > 0; }
+      bool is_not_full() const { return m_unread < m_container.capacity(); }
+
+      size_type m_unread;
+      container_type m_container;
+      boost::mutex m_mutex;
+      boost::condition m_not_empty;
+      boost::condition m_not_full;
 };
 
-enum error_info{
-	INVALID_PARAMETER = 0x01,
-	TASK_IS_NOT_RUNNING = 0x0f
-};
 
-struct state_t
-{
-	int state;
-	int error;
-	string connection_id;
-	XmlRpcValue * server_params;
-        XmlRpcValue * noArgs;
-	XmlRpcClient * connection_task;
-	XmlRpcClient * connection_server;
-} state;
+template<class Buffer>
+   class Consumer {
+
+       typedef typename Buffer::value_type value_type;
+       Buffer* m_container;
+       value_type m_item;
+
+   public:
+       Consumer(Buffer* buffer) : m_container(buffer) {}
+
+       void operator()() {
+
+	ofstream file( "log/consumer" );
+
+           for (unsigned long i = 0L; i < TOTAL_ELEMENTS; ++i) {
+        	   //std::cout << "consumer " << i << "\n" << std::endl;
+        	   file << "consumer " << i << "  " <<   "\n" << std::endl;
+               m_container->pop_back(&m_item);
+           }
+
+	file.close();
+       }
+   };
+
+
+template<class Buffer>
+class Producer {
+       typedef typename Buffer::value_type value_type;
+       Buffer* m_container;
+
+       int status;
+   public:
+       Producer(Buffer* buffer) : m_container(buffer) {}
+
+       void operator()() {
+           rtaixml_domain::Socket data_sock;
+           std::string data_from_server;
+
+    	   data_sock.create();
+
+           if (!data_sock.connect("10.0.9.21", 29502))
+         		std::cout << "Error by connecting to the data socket\n";
+           std::cout << "socket initialization: ok\n";
+
+	   ofstream producer_log("log/producer");
+
+           while (1){
+         	  	producer_log << "getting date \n" << std::endl;
+         		status = data_sock.recv(data_from_server);
+         	  	producer_log << "got date \n" << std::endl;
+         		if (status == -1)
+         			producer_log << "Error by receiving\n" << std::endl;
+         		else if (status == 0)
+         			producer_log << "received nothing\n" << std::endl;
+         		else{
+         			producer_log << "Received:  " <<  data_from_server << "\n" << std::endl;
+				m_container->push_front(data_from_server);
+         		}
+         	}
+	   producer_log.close();
+           /*
+           for (unsigned long i = 0L; i < TOTAL_ELEMENTS; ++i) {
+        	   std::cout << "producer " << i << "\n" << std::endl;
+               m_container->push_front(value_type());
+           }
+           */
+       }
+
+
+   };
+
+
+template<class Buffer>
+   void fifo_task_cgi(Buffer* buffer) {
+
+       // Start of measurement
+       boost::progress_timer progress;
+
+       // Initialize the buffer with some values before launching producer and consumer threads.
+       for (unsigned long i = QUEUE_SIZE / 2L; i > 0; --i) {
+   #if BOOST_WORKAROUND(__BORLANDC__, BOOST_TESTED_AT(0x581))
+           buffer->push_front(Buffer::value_type());
+   #else
+           buffer->push_front(BOOST_DEDUCED_TYPENAME Buffer::value_type());
+   #endif
+       }
+
+       Consumer<Buffer> consumer(buffer);
+       Producer<Buffer> producer(buffer);
+
+       // Start the threads.
+       boost::thread consume(consumer);
+       boost::thread produce(producer);
+
+       // Wait for completion.
+       consume.join();
+       produce.join();
+
+       // End of measurement
+   }
+
+
 
 
 string update_param(string param)
@@ -139,10 +309,10 @@ string update_param(string param)
 
 		return ret;
 	}
-	catch(exception &e)
+	catch(std::exception &e)
 	{
 		cout << e.what() << endl;
-		ret += "\n exception: " + string(e.what());
+		ret += "\n std::exception: " + string(e.what());
 		return ret;
 	}
 }
@@ -155,7 +325,7 @@ bool connect(string server, int port)
 	XmlRpcValue noArgs, resultM, resultT, result;
 
 	//std::cout << "connecting to manager   ";
-	noArgs[0]="v2_visual";
+	noArgs[0]="test";
 	noArgs[1]="Master";
 	if (cm->execute("Connection_Request", noArgs, resultM))
 	{
@@ -169,6 +339,35 @@ bool connect(string server, int port)
 		return false;
 	}
 	return true;
+}
+
+
+bool init_data_stream(string connection_id, FCgiIO * IO ) 
+{
+try {
+	XmlRpcValue noArgs, resultM;
+
+	XmlRpcClient * ct = state.connection_server;
+	noArgs.clear();
+	noArgs[0] = connection_id;
+	noArgs[1] = 0;
+	if (ct->execute("Start_Data", noArgs, resultM)) {
+		state.connection_task = ct;		
+		*IO << "<Start_Data>" << resultM.toXml() << "</Start_Data>\n";
+	}
+
+//	bounded_buffer<std::string> bb_string(QUEUE_SIZE);
+//	std::cout << "bounded_buffer<std::string> ";
+//	fifo_task_cgi(&bb_string);
+//        bb_string = new bouned_buffer<std::string>(QUEUE_SIZE);
+//        ftc = new fifo_task_cgi(&bb_string);
+
+
+	return true;
+} catch (std::exception &e) {
+	*IO << e.what() << endl;
+}
+return true;
 }
 
 bool get_data_structure( string server, string connection_id, FCgiIO * IO ) 
@@ -197,12 +396,20 @@ try {
 		return false;
   	}
 
+	if (ct->execute("Get_Digital_Structure", noArgs, resultT)) {
+		*IO << "<digitalstructure>" << resultT.toXml() << "</digitalstructure>\n";
+	}
+	else {
+		std::cout << "Error calling 'tConnect'\n\n";
+		return false;
+  	}
+
 	if (ct->execute("Get_Param", noArgs, resultT)) {
 		state.server_params = new XmlRpcValue(resultT);
 		state.noArgs = new XmlRpcValue(noArgs);
 		*IO << "<parameters>" << resultT.toXml() << "</parameters>\n";
 	}
-} catch (exception &e) {
+} catch (std::exception &e) {
 	*IO << e.what() << endl;
 }
 	return true;
@@ -214,6 +421,7 @@ void dispatch(Cgicc * CGI, FCgiIO * IO )
 
 	string error;
 	form_iterator action = CGI->getElement("action");
+
 	if(action != CGI->getElements().end())
 	{
 		if ( string(**action) == "connect")
@@ -269,7 +477,32 @@ void dispatch(Cgicc * CGI, FCgiIO * IO )
 				error += "not connected\n";
 			}
 
-		} else
+		} else if (string(**action) == "get_data_stream") { /////// for charts
+			if ( state.state & CONNECTED ){
+				init_data_stream( state.connection_id, IO );
+			}
+			++state.t;
+			*IO << "<params>" << 
+				    "<param>" << 
+					"<point><x>"<< state.t <<"</x><y>"<< (rand()%100)+1 <<"</y></point>" << 
+					"<name>Winkel Scope</name>" << 
+				    "</param>" <<
+				    "<param>" << 
+					"<point><x>"<< state.t <<"</x><y>"<< (rand()%100)+1 <<"</y></point>" << 
+					"<name>Controller Switcher</name>" << 
+				    "</param>" <<
+				    "<param>" << 
+					"<point><x>"<< state.t <<"</x><y>"<< (rand()%100)+1 <<"</y></point>" << 
+					"<name>Wikel Velocity Scope</name>" << 
+				    "</param>" <<
+				"</params>\n";
+		} else if (string(**action) == "add_plot") {
+			//CGI->getElement("varname");
+			
+		} else if (string(**action) == "remove_plot") {
+		
+		}	
+		else
 		{
 			error += "wrong arguments\n";
 		}
@@ -300,8 +533,16 @@ void print_footer( FCgiIO* IO )
 
 int main(int /*argc*/, const char **/*argv*/, char **/*envp*/)
 {
+	buffer = boost::scoped_ptr<bounded_buffer<std::string>>(new bounded_buffer<std::string>(QUEUE_SIZE));
+	//bounded_buffer<std::string> bb_string(QUEUE_SIZE);
+	//std::cout << "bounded_buffer<std::string> ";
+	//fifo_task_cgi(&bb_string);
+ 	  remove_all("log");
+	  create_directory("log");
+
 
 	state.state = 0;
+	state.t = 0;
 
 	FCGX_Request request;
 
@@ -328,7 +569,7 @@ int main(int /*argc*/, const char **/*argv*/, char **/*envp*/)
 
 			print_footer(&IO);
 		}
-		catch(const exception& e)
+		catch(const std::exception& e)
 		{
 			std::cout << e.what() << endl;
 		}

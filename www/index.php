@@ -6,9 +6,8 @@
  *
  * @category PHP
  * @package  Game
- * @author   Vladimir Viro <vviro@mail.ru>
+ * @author   Vladimir Viro <vv@viro.name>
  * @license  BSD License
- * @link     http://seoka.de/game
  */
 
 require_once "inc/sess.inc";

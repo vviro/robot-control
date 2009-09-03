@@ -3,8 +3,14 @@
 	<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.3.2/jquery.min.js"></script>
 	<script src="js/jquery.xml2json.js"></script>
 	<script src="js/json2.js"></script>
+	<script type="text/javascript" src="js/jquery.timer.js"></script>
+	<script type="text/javascript" src="js/jquery.pause.js"></script>
+	<script type="text/javascript" src="js/jquery.svg.js"></script>
+
 	<link rel="stylesheet" type="text/css" href="http://yui.yahooapis.com/combo?2.7.0/build/editor/assets/skins/sam/simpleeditor.css&2.7.0/build/treeview/assets/skins/sam/treeview.css"> 
 	<script type="text/javascript" src="http://yui.yahooapis.com/combo?2.7.0/build/utilities/utilities.js&2.7.0/build/editor/simpleeditor-min.js&2.7.0/build/treeview/treeview-min.js"></script> 
+	<script src="js/svg.js"></script>
+
 	<style type="text/css"> 
 		#error_msg {font-color:red;}
 		#control_form {
@@ -30,10 +36,23 @@
 		#connection_status a {
 		    float:left;
 		}
+		#conn_info {
+		    width:300px;
+		    padding:20px
+		}
+		#signal_structure_tree {
+		    padding:20px;
+		}
 		#connected {
 		    float:right;
 		}
+		#plots {
+		    position:absolute;
+		    left:500px;
+		    top:20px
+		}
 	</style>
+
 </head>
 
 
@@ -65,8 +84,10 @@
 <div id="connection_status"><a>State:</a><div id="connected">Not connected</div></div>
 <p>
 <div id="error_msg"></div>
+<div id="signal_structure_tree"></div>
 <div id="conn_info"></div>
-
+<div id="log"></div>
+<div id="plots"></div>
 <script>
 
 function is_array(input){
@@ -75,7 +96,13 @@ function is_array(input){
 
 var xml;
 var xml_params;
-var changed_parameters = new Object;
+
+var changed_parameters = {};
+
+var plot_divs = [];
+
+var signal_params = [];
+
 var url = "/fcgi/test.fcgi";
 
 $(document).ready(function () {
@@ -98,22 +125,32 @@ $(document).ready(function () {
 				} else {
 				$("#error_msg").empty();
 			}
-			if (data.success == "1") {
+			if (data.success === "1") {
 				$("#connected").html("Connected");
 				$("#control_submit").val("disconnect");
 				$("#control_form > input[name='action']").val("disconnect");
-				} else {
+			} else {
 				$("#connected").html("Not connected");
 				$("#control_submit").val("connect");
 				$("#control_form > input[name='action']").val("connect");
+				
+				$("#signal_structure_tree").empty();
+				$("#plots").empty();
+				signal_params = [];
 			}
 			
 			if (data.connectioninfo) {
-			    print_struct_info(data.connectioninfo.value.struct);
+//			    print_struct_info(data.connectioninfo.value.struct);
 			}
 			if (data.signalstructure) {
 			    print_structure_info(data.signalstructure);
 		    	}
+			if (data.digitalstructure) {
+			    print_structure_info(data.digitalstructure);
+		    	}
+
+			print_signal_structure(signal_params); 
+
 			if (data.parameters) {
 			   print_parameters(xml_params);
 			}
@@ -121,7 +158,61 @@ $(document).ready(function () {
 		}, "xml");
 	});
 
+	function print_signal_structure(signal_params) {
+		if (!signal_params || signal_params.length === 0) return;
+
+		$("#signal_structure_tree").empty();
+		$("#signal_structure_tree").append($('<h3>').text('plottable variables'));
+//		$("<div>").attr("id","signal_structure_tree").appendTo($("#conn_info"));
+		jQuery.each(signal_params, function (i, val) {
+			var sp = val; 
+			var cb = $('<input type="checkbox"/>').attr('id','toggle_' + sp);
+			cb.click(function() {
+			        toggle_plotting(sp, $(this).attr('checked'));
+			});
+			$('<div>').attr('class','var').append($('<a>').text(sp)).append( cb ).appendTo("#signal_structure_tree");
+		});
+	}
+
+	function toggle_plotting( id, state ) {
+	    if (state) {
+		var s = Math.round(Math.random()*1000000000);
+		$('#plots').append($('<div id="svg_' + s + '_cover">').append($('<h3>').text(id)).append($('<div id="svg_' + s + '">').svg()));
+		var svg = $('#svg_'+s).svg('get');
+		var sv = $('#svg_'+s+ ' > svg');
+		sv.css('width',400);
+		sv.css('height',200);
+		sv.css('border','1px solid #484');
+
+    	        var g = svg.group({stroke: 'black', 'stroke-width': 2});
+		$('#svg_'+s).data('g',g);
+		$('#svg_'+s).data('svg',svg);
+		
+		plot_divs[id] = s;
+		$.post(url, {action: "add_plot", varname: id}, function (data) {
+		
+		});
+	    } else {
+		var s = plot_divs[id];
+		$('#svg_'+s+'_cover').remove();
+		$.post(url, {action: "remove_plot", varname: id}, function (data) {
+		
+		});
+	    }	
+	}
+
 	function print_parameters( xml ) {
+
+		$("#conn_info").append($('<h3>').text('changeable parameters'));
+
+		$('#conn_info').append($("<input type='button' id='update_params' value='update parameters'>").click(function(){
+			$.post(url, {
+				action:"update",
+				changed_params:format_return_params(changed_parameters)
+			});
+		}));
+
+
 		var task_name;
 		$(xml).find('value > array > data > value:not(:first) > array > data:first').each(function() {
 			var task_raw = $(this).find('value:first').text();
@@ -131,9 +222,9 @@ $(document).ready(function () {
 
 		$("<div>").attr("id","task_tree").appendTo($("#conn_info"));
 	
-		tree = new YAHOO.widget.TreeView("task_tree");
+		var tree = new YAHOO.widget.TreeView("task_tree");
 		var root = tree.getRoot();
-		var tmpNode1 = new YAHOO.widget.TextNode({label: "Tasks", expanded: false}, root); 
+		var tmpNode1 = new YAHOO.widget.TextNode({label: "Tasks", expanded: true}, root); 
 		var tmpNode2 = new YAHOO.widget.TextNode({label: task_name ,expanded: false, editable:false}, tmpNode1); 
 
 		var var_id = 0;
@@ -153,14 +244,36 @@ $(document).ready(function () {
 			var nin = $(this).find('i4:eq(1)').text();
 			var d = $(this).find('value > array > data > value > double').text();
 
-//			create_tree( task_name );
-//			append_var_to_tree( task_name, varname, d);
-
 			if (blockname) {
-				var tmpNode3 = new YAHOO.widget.TextNode({label: varname, expanded: false}, tmpNode2); 
-				tmpNode3.setNodesProperty('labelStyle','varname');
-				var tmpNode4 = new YAHOO.widget.TextNode({label: d, expanded: false, editable:true}, tmpNode3); 
+
+				var prev_node = tmpNode2;
+				var tmpNode;
+
+				for (var i=1; i < task_array.length; i++) {
+
+					var child_name = task_array[i];
+
+					if (param_is_signal(child_name)) {
+						return;
+					}
+
+					if (i == task_array.length - 1) {
+						child_name += " (" + param_name+ ")";
+					}
+					if (!child_exists(prev_node, child_name)) {
+						tmpNode = new YAHOO.widget.TextNode({label: child_name, expanded: false}, prev_node); 
+//						$("#log").append("<br>").append(prev_node.label + " child " + tmpNode.label + " added");
+					} else {
+						tmpNode = get_child(prev_node, child_name);
+//						$("#log").append("<br>").append(prev_node.label + " got child " + tmpNode.label);
+					}
+					prev_node = tmpNode;
+				}
+
+				var tmpNode4 = new YAHOO.widget.TextNode({label: d, expanded: false, editable:true}, prev_node); 
 				tmpNode4.setNodesProperty('labelStyle','varvalue');
+
+
 				var oldSaveValue = tmpNode4.saveEditorValue;
 				var_id = var_id + 1;
 				tmpNode4.saveEditorValue = function(data) {
@@ -174,40 +287,54 @@ $(document).ready(function () {
 		tree.subscribe('dblClickEvent',tree.onEventEditNode); 
 	}
 
+	function child_exists(node, child_name) {
+		if (!node) return false;
+
+		var o = node.getNodeDefinition();
+		var node_name = o.label;
+		var c = o.children;
+		if (c) {
+			for (var i = 0; i < c.length; i++) {
+				if ( c[i].label === child_name ) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	function get_child(node, child_name) {
+
+		var c = node.children;
+		for (var i = 0; i < c.length; i++) {
+			if ( c[i].label === child_name ) {
+				return c[i];
+			}
+		}
+		return false;
+	}
+
+	function param_is_signal(child_name) {
+		for (var j = 0; j < signal_params.length; j++ ) {
+			if (signal_params[j] === child_name) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	function mark_as_changed(task_name, var_id, blockname, param_name, old_value, new_value) {
 		//		alert(task_name + ' ' + varname + ' ' + old_value + ' ' + new_value);
 		var key = task_name + blockname + param_name;
 		changed_parameters[key] = {task_name:task_name, blockname:blockname, param_name:param_name, old_value:old_value, new_value:new_value};
 	}
 
-	function create_tree( name ) {
-		if ($("#task_"+name).length > 0) {return;}
-		else {
-			$("<div>").attr("id","task").appendTo($("#conn_info"));
-		}
-		if ($("#task_tree").length > 0) {return;}
-		else {
-			$("<div>").attr("id","task_tree").appendTo($("#conn_info"));
-	                tree = new YAHOO.widget.TreeView("task_tree", [
-                        	{type:'Text', label:"Tasks", editable:false, expanded:true, children:[
-                                	{type:'Text', label:name, editable:false}
-        	       	        ]}
-	                ]);
-        	        tree.render();
-			tree.subscribe('dblClickEvent',tree.onEventEditNode); 
-		}
-
-	}
-
-	function append_var_to_tree( task_name, varname, value ) {
-		$("#task_"+task_name).append($("<div class='var'>").append( $("<a>").html(varname+": "))
-			    .append( $("<input type='text'>").val(value).attr('name',varname) ) ).append( $("<br>") );
-
-		var tree = new YAHOO.widget.TreeView("task_tree"); 
-		var tmpNode = tree.getNodeByProperty("label", task_name); 
-		var tmpNode3 = new YAHOO.widget.TextNode({label: varname, expanded: false}, tmpNode); 
-		var tmpNode4 = new YAHOO.widget.TextNode({label: value, expanded: false, editable:true}, tmpNode3); 
-		tree.render(); 	
+	function format_return_params(cp) {
+		var r = "";
+		$.each(cp, function (i, item) {
+			r += "\"" + item.task_name + "\",\"" + item.blockname + "\",\"" + item.param_name + "\",\"" +  item.new_value+ "\"\n";
+		});
+		return r;
 	}
 
 	function print_structure_info( structure ) {
@@ -216,22 +343,7 @@ $(document).ready(function () {
 		for (vs in values) {
 			print_struct_info( values[vs].struct );
 		}
-		$('#conn_info').append($("<input type='button' id='update_params' value='update parameters'>").click(function(){
-			$.post(url, {
-				action:"update",
-				changed_params:format_return_params(changed_parameters)
-			});
-		}));
 	}
-	
-	function format_return_params(cp) {
-		var r = "";
-		for each (var item in cp) {
-			r += "\"" + item.task_name + "\",\"" + item.blockname + "\",\"" + item.param_name + "\",\"" +  item.new_value+ "\"\n";
-		}
-		return r;
-	}
-
 	
 	function print_struct_info( struct ) {
 		ms = struct.member;
@@ -252,15 +364,19 @@ $(document).ready(function () {
 				numval = v;
 			}
 		}
-		if (numval)
-			$("#conn_info").append( $("<div class='var'>").append( $("<a>").html(varname+": "))
-			    .append( $("<input type='text'>").val(numval).attr('name',varname) ) ).append( $("<br>") );
+
+		if (numval) {
+			signal_params[signal_params.length] = varname;
+//			$("#conn_info").append( $("<div class='var'>").append( $("<a>").html(varname+": "))
+//			    .append( $("<input type='text'>").val(numval).attr('name',varname) ) ).append( $("<br>") );
+		}
 	}
 
 
 	
 });
 </script>
+
 <style>
     .var{
 	width:240px;

@@ -1,1 +1,1 @@
-g++ fcgi-test.cpp FCgiIO.cpp -lSlave -lxmlrpc++ -lcgicc -lfcgi++ -lboost_regex -I/usr/realtime/include -L/usr/realtime/lib  -o test.fcgi 
+g++ fcgi-test.cpp FCgiIO.cpp -lSlave -lxmlrpc++ -lcgicc -lfcgi++ -lboost_regex -lboost_filesystem-gcc42-mt -lboost_thread-gcc42-mt -I/usr/realtime/include -L/usr/realtime/lib -o test.fcgi
