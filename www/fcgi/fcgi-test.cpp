@@ -51,6 +51,10 @@
 #include <boost/thread/thread.hpp>
 #include <boost/progress.hpp>
 #include <boost/bind.hpp>
+#include <boost/algorithm/string/split.hpp>
+//#include <boost/numeric/ublas/vector.hpp>
+#include <boost/interprocess/sync/interprocess_semaphore.hpp>
+
 #include <deque>
 #include <list>
 #include <string>
@@ -69,11 +73,11 @@ static int semid;
 
 
 #include <boost/filesystem.hpp>  
+
 	using namespace boost::filesystem;  
-
-
 	using namespace boost;
-	using boost::lexical_cast;
+//	using espace boost::lexical_cast;
+//	using namespace boost::numeric::ublas;
 
 	using namespace std;
 	using namespace cgicc;
@@ -87,12 +91,30 @@ static int semid;
 
 	enum server_state{
 		CONNECTED = 0x01,
+		SENDDATA = 0x02,
+		PLOTING = 0x04,
 		UNDEFINED = 0x0f
 	};
 
 	enum error_info{
 		INVALID_PARAMETER = 0x01,
 		TASK_IS_NOT_RUNNING = 0x0f
+	};
+
+	struct scope_t{
+		int id;
+		string name; 
+		unsigned int length;
+		unsigned long long seq;
+	        std::vector<std::string> * signals;
+	};
+
+	struct led_t{
+		unsigned int id;
+		string name; 
+		unsigned int length;
+		unsigned long long seq;
+	        std::vector<bool> * signals;
 	};
 
 	struct state_t
@@ -104,8 +126,19 @@ static int semid;
 		XmlRpcValue * noArgs;
 		XmlRpcClient * connection_task;
 		XmlRpcClient * connection_server;
+
+		int nscope;
+		int nled;
+		int nscope_signal;
+		int nled_signal;
+		std::vector<struct scope_t> * sim_scope;
+		std::vector<struct led_t> * sim_led;
+	
+		boost::interprocess::interprocess_semaphore *sem;
+
 		int t;
 		ofstream * log;
+
 	} state;
 
 union semun {
@@ -216,6 +249,7 @@ bool connect(string server, int port)
 {
 	// port should be 29500
 
+	*state.log << "connecting to task ... " << std::endl;
 	XmlRpcClient * cm = new XmlRpcClient(server.c_str(), port);
 	XmlRpcValue noArgs, resultM, resultT, result;
 
@@ -227,64 +261,118 @@ bool connect(string server, int port)
 		state.state = state.state | CONNECTED ;
 		state.noArgs = new XmlRpcValue(noArgs);
 		state.connection_server = cm;
+		*state.log << "connection ko " << std::endl;
 	} else {
 		std::cout << "Error calling 'Connection_Request'\n\n";
 		return false;
 	}
 	return true;
 }
-i
 
 bool init_data_stream (string connection_id, FCgiIO * IO ) 
 {
-//	*state.log << "init_data_stream " << std::endl;
-try {
+	*state.log << "init_data_stream " << std::endl;
 	XmlRpcValue noArgs, resultM;
 
-	XmlRpcClient * ct = state.connection_server;
+	for (int i = 0; i < state.nscope; i++){
 	noArgs.clear();
 	noArgs[0] = connection_id;
-	noArgs[1] = 0;
-	if (ct->execute("Start_Data", noArgs, resultM)) {
-		state.connection_task = ct;		
+	noArgs[1] = i;
+	if (state.connection_task->execute("Start_Data", noArgs, resultM)) {
+
+	*state.log << "init_scope_stream " << i << " finished " << std::endl;
 		*IO << "<Start_Data>" << resultM.toXml() << "</Start_Data>\n";
+	}
 	}
 
 	return true;
-} catch (std::exception &e) {
-	*IO << e.what() << endl;
-}
-return true;
+	
 }
 
 bool get_data_structure( string server, string connection_id, FCgiIO * IO ) 
 {
 try {
 	XmlRpcValue noArgs, resultM, resultT, result;
+	int i;
+
+	stringstream ss, ss2;
+	string s;
+
+	std::vector<std::string> strs, strs2, strs3;
+	state.sim_scope = new std::vector<struct scope_t>();
+	state.sim_led = new std::vector<struct led_t>();
+	struct scope_t a_scope;
 
 	XmlRpcClient * ct = new XmlRpcClient(server.c_str(), 29501);
+	state.connection_task = ct;
 	noArgs.clear();
 	noArgs[0] = connection_id;
 
 	if (ct->execute("tConnect", noArgs, resultM)) {
 		state.connection_task = ct;		
 		*IO << "<connectioninfo>" << resultM.toXml() << "</connectioninfo>\n";
+		*state.log << "Successfully calling 'tConnect'\n\n";
 	}
 	else {
-		std::cout << "Error calling 'tConnect'\n\n";
+		*state.log << "Error calling 'tConnect'\n\n";
 		return false;
 	}
 
 	if (ct->execute("Get_Signal_Structure", noArgs, resultT)) {
+		*state.log << "Successfully calling 'Get_Signal_Structure'\n\n";
 		*IO << "<signalstructure>" << resultT.toXml() << "</signalstructure>\n";
+		state.nscope = resultT.size() - 1;
+		for (i = 1; i <= state.nscope ; i++){
+	                ss << resultT[i] << std::endl;
+			s = ss.str();
+			boost::split(strs, s, boost::is_any_of(","));
+			boost::split(strs2, strs[1], boost::is_any_of(":"));
+                        boost::split(strs3, strs[2], boost::is_any_of(":"));
+			
+			state.nscope_signal += lexical_cast<int>(strs2[1]);
+
+
+			ss2 << strs3[1];
+			s = ss2.str();
+			s.resize(s.size() - 2);
+		//	state.signal_names->push_back(s);
+			*state.log << strs2[1] << " - " << s << "\n";
+			ss.str("");
+			ss2.str("");
+
+			
+			a_scope.id = i - 1;
+			a_scope.name = s;
+			a_scope.length = lexical_cast<int>(strs2[1]);
+			std::vector<std::string>* a_signal_slot = new std::vector<std::string>(a_scope.length);
+			a_scope.signals = a_signal_slot;
+			
+			state.sim_scope->push_back(a_scope);
+
+			*state.log << "sim_scopes: " << (*state.sim_scope)[i-1].id << "-" << (*state.sim_scope)[i-1].name <<"-" << (*state.sim_scope)[i-1].length <<     std::endl;
+		}
+
+		*state.log << "Number of scopes :" << state.nscope << " Number of scope signals: " << state.nscope_signal << std::endl;
+		//state.signal_names = new std::vector<std::string>(state.nscope_signal);
 	}
 	else {
-		std::cout << "Error calling 'tConnect'\n\n";
+		*state.log << "Error calling 'Get_Signal_Structure'\n\n";
 		return false;
   	}
 
 	if (ct->execute("Get_Digital_Structure", noArgs, resultT)) {
-		*IO << "<digitalstructure>" << resultT.toXml() << "</digitalstructure>\n";
+		*IO << "<digitalstructure>" << resultT.toXml() << "</digitalstructure>\n";	
+		state.nled = resultT.size() - 1;
+		
+		for (i = 1; i <= state.nled ; i++){
+	                ss << resultT[i] << std::endl;
+			s = ss.str();
+			boost::split(strs, s, boost::is_any_of(","));
+			boost::split(strs2, strs[1], boost::is_any_of(":"));
+			
+			state.nled_signal += boost::lexical_cast<int>(strs2[1]);
+		}
+		*state.log << "Number of leds :" << state.nled << " Number of led signals: " << state.nled_signal << std::endl;
 	}
 	else {
 		std::cout << "Error calling 'tConnect'\n\n";
@@ -305,10 +393,12 @@ try {
 void dispatch(Cgicc * CGI, FCgiIO * IO )
 {
 	int ret;
+	int i;
 
 	string error;
 	form_iterator action = CGI->getElement("action");
 
+	//*state.log << "ACTION: " << string(**action) << std::endl;
 	if(action != CGI->getElements().end())
 	{
 		if ( string(**action) == "connect")
@@ -335,13 +425,17 @@ void dispatch(Cgicc * CGI, FCgiIO * IO )
 				}
 
 				ret = connect( (**node).c_str(), lexical_cast<int>((**port).c_str()) );
-				if (ret)
+				if (ret){
 					*IO << "<success>" << 1 << "</success>\n";
-				else
-					*IO << "<success>" << 0 << "</success>\n";
-
-				if (ret)
+					*state.log << "connection successful: " << ret << "\n" <<  std::endl;
+					//init_data_stream( state.connection_id, IO );
 					bool s2 = get_data_structure( string(**node), state.connection_id, IO );
+				}
+				else {
+					*IO << "<success>" << 0 << "</success>\n";
+					*state.log << "connection failed: " << ret << "\n" <<  std::endl;
+				}
+
 			}
 			else
 			{
@@ -367,36 +461,58 @@ void dispatch(Cgicc * CGI, FCgiIO * IO )
 		} else if (string(**action) == "get_data_stream") { /////// for charts
 			if ( state.state & CONNECTED ){
 				//*state.log << "get_data_stream: binding to 29502\n" << std::endl;
-				init_data_stream( state.connection_id, IO );
-				_v();_v();_v();
+				//init_data_stream( state.connection_id, IO );
+				//_v();_v();_v();
+			
+				if (state.state & SENDDATA){
 
+				state.sem->post();
 
-			}
-			++state.t;
-			*IO << "<params>" << 
+				++state.t;
+/*
+				*IO << "<params>" << 
+
 				    "<param>" << 
-					"<point><x>"<< state.t <<"</x><y>"<< (rand()%100)+1 <<"</y></point>" << 
-					"<name>Winkel Scope</name>" << 
+   	                                "<point><x>"<< state.t <<"</x><y>"<< (*(*state.sim_scope)[0].signals)[0] <<"</y></point>" <<
+                                        "<name>" << (*state.sim_scope)[0].name << "</name>" <<
 				    "</param>" <<
 				    "<param>" << 
-					"<point><x>"<< state.t <<"</x><y>"<< (rand()%100)+1 <<"</y></point>" << 
-					"<name>Controller Switcher</name>" << 
+   	                                "<point><x>"<< state.t <<"</x><y>"<< (*(*state.sim_scope)[1].signals)[0] <<"</y></point>" <<
+                                        "<name>" << (*state.sim_scope)[1].name << "</name>" <<
 				    "</param>" <<
 				    "<param>" << 
-					"<point><x>"<< state.t <<"</x><y>"<< (rand()%100)+1 <<"</y></point>" << 
-					"<name>Wikel Velocity Scope</name>" << 
+   	                                "<point><x>"<< state.t <<"</x><y>"<< (*(*state.sim_scope)[2].signals)[0] <<"</y></point>" <<
+                                        "<name>" << (*state.sim_scope)[2].name << "</name>" <<
+			//		"<point><x>"<< state.t <<"</x><y>"<< (rand()%100)+1 <<"</y></point>" << 
+			//		"<name>U1</name>" << 
 				    "</param>" <<
 				"</params>\n";
+*/
+
+					*IO << "<params>";
+					for (i = 0; i < state.nscope_signal; i++){
+     	                                   *IO << "<param>" <<
+        	                               "<point><x>"<< state.t <<"</x><y>"<< (*(*state.sim_scope)[i].signals)[0] <<"</y></point>" <<
+                	                        "<name>" << (*state.sim_scope)[i].name << "</name>" <<
+                                    		"</param>";
+					}
+					*IO << "</params>\n" << std::endl;
+
+				}
+			}
+		
 		} else if (string(**action) == "add_plot") {
-			//CGI->getElement("varname");
+			*state.log << "!state.state & SENDDATA: " << !(state.state & SENDDATA)  << std::endl;
+			if(!(state.state & SENDDATA)){
+				init_data_stream( state.connection_id, IO );
+			}
+			*state.log << "signal ploting ..." << std::endl;
+			if (!(state.state & PLOTING) ){
+				state.sem->post();
+			}
 
-			*state.log << "signal ploting ...\n" << std::endl;
-			ret = _v();
-			ret = _v();
-			ret = _v();
+			state.state |= PLOTING;
 
-			*state.log << "_v returnd: " << ret << "\n" <<  std::endl;
-			
 		} else if (string(**action) == "remove_plot") {
 		
 		}	
@@ -438,41 +554,23 @@ void *receiver(void *)
 	int ret = -2;
 
 	
-	/* init socket */
-	ret = _p();
-	*state.log << "_p returnd: " << ret << "\n" <<  std::endl;
+	state.sem->wait();
 
-	/*
+	*state.log << "Thread RECV: actived \n" << std::endl;
 
-	rtaixml_domain::Socket data_sock;
-        std::string data_from_server;
+	/* connect to task */
+	int fd; int i;
+	int id;
+	unsigned long long seq;
 
-        data_sock.create();
-
-        if (!data_sock.connect("10.0.9.21", 29502)){
-                     *state.log << "Error by connecting to the data socket\n";
-	} else {
-           	*state.log << "socket initialization: ok\n";
-	}
-
-
-	while (1){
-		ret = _p();
-		*state.log << "_p returnd: " << ret << "\n" <<  std::endl;
-		*state.log << "Got seed: " << counter ++ << "\n" << std::endl;
-		ret = data_sock.recv(data_from_server);
-		*state.log << "Received:  " <<  data_from_server << "\n" << std::endl;
-	}
-	*/
-
-
-	int fd;
 	struct sockaddr_in serverip;
-	char data[4096];
+	char data[25*100000];
 	bzero(data, sizeof(data));
 
+	std::vector<std::string> strs, strs2;
+
 	fd = socket(AF_INET, SOCK_STREAM, 0);
-	fcntl(fd, F_SETFL, O_NONBLOCK);
+//	fcntl(fd, F_SETFL, O_NONBLOCK);
 
 	bzero(&serverip, sizeof(serverip));
 	serverip.sin_family = AF_INET;
@@ -480,47 +578,93 @@ void *receiver(void *)
 	serverip.sin_addr.s_addr = inet_addr("10.0.9.21");
 
 	ret = connect(fd, (struct sockaddr *)&serverip, sizeof(serverip));
-
 	*state.log << "Conneting ... : " << ret << std::endl;
-	ret = _p();
+
+	//state.sem->wait();
+	state.state |= SENDDATA;
+
+
 	while (1){
-		 //ret = _p();
-                *state.log << "_p returnd: " << ret << "\n" <<  std::endl;
-                *state.log << "Got seed: " << counter ++ << "\n" << std::endl;
+		/* clean buffer */
+		bzero(data, sizeof(data));
+
+		strs.clear();
+		strs2.clear();
+
+		state.sem->wait();
+
+		*state.log << "========================= Thread RECV: " << counter++ << " ====================== \n" << std::endl;
                 ret = read(fd, data, sizeof(data));
-		*state.log << "read: " << ret << "  errno: " << errno << std::endl;
-                *state.log << "Received:  " <<  data << "\n" << std::endl;
 
+		boost::split(strs, data, boost::is_any_of("\n"));
+
+		*state.log << "socket: read: " << ret << "  errno: " << errno << std::endl;
+                *state.log << "Received: \n" <<  data << std::endl;
+                *state.log << "Received:  " << strs.size() - 1 << " data" << "  last: " << strs[strs.size() - 2] << "\n" << std::endl;
+
+
+//		for ( i = 0; i < strs.size() - 5; i++){
+//	                *state.log << "====" << strs[i] << "\n" << std::endl;
+//		}
+	
+
+//	state.sem->wait();
+
+		
+		boost::split(strs2, strs[strs.size() - 2], boost::is_any_of(" "));
+
+                *state.log << "Received(last) Tokens: " << strs2[0] << "-" << strs2[1] << "-" << strs2[2]  << std::endl;
+
+		id = lexical_cast<int>(strs2[0]);
+		seq = lexical_cast<unsigned long long>(strs2[1]);
+
+ 		(*state.sim_scope)[id].seq = seq;
+		(*(*state.sim_scope)[id].signals)[0] = string(lexical_cast<string>(1000*lexical_cast<double>(strs2[2])));
+
+		*state.log << ">>>>>>>>>>>>>>>>" << "id: "<< id << "  seq: " << seq << "   value: "  << lexical_cast<double>(strs2[2]) << std::endl;
+
+	
 	}
+}
 
+int init()
+{
+	state.state = 0;
+	state.t = 0;
+	state.nscope = 0;
+	state.nled = 0;
+	state.nscope_signal = 0;
+	state.nled_signal = 0;
 }
 
 int main(int /*argc*/, const char **/*argv*/, char **/*envp*/)
 {
+	/* init globale variables */
+	init();
+
 	/* init log */
  	remove_all("log");
 	create_directory("log");
    	state.log = new ofstream("log/log");
 
 	/* init sem */
-	semid = semget((key_t)1234, 1, 0666 | IPC_CREAT);
-	*state.log << "SEMID: " << semid << "  errno: " << errno <<"\n" << std::endl;
+	//semid = semget((key_t)1234, 1, 0666 | IPC_CREAT);
+	//*state.log << "SEMID: " << semid << "  errno: " << errno <<"\n" << std::endl;
 
+	/*
 	union semun sem_union;
 	sem_union.val = 1;
 	if (semctl(semid, 0, SETVAL, sem_union) == -1){
 		*state.log << "semctl error\n" << std::endl;
 	}else{
 		*state.log << "semctl ok\n" << std::endl;
-	}
+	}*/
+
+	state.sem = new boost::interprocess::interprocess_semaphore(0);
 
 	/* init thread */
 	pthread_t thread;
 	pthread_create(&thread, NULL, receiver, NULL);
-
-	/* init gloable variables */
-	state.state = 0;
-	state.t = 0;
 
 	/* init fast cgi */
 	FCGX_Request request;

@@ -6,6 +6,7 @@
 	<script type="text/javascript" src="js/jquery.timer.js"></script>
 	<script type="text/javascript" src="js/jquery.pause.js"></script>
 	<script type="text/javascript" src="js/jquery.svg.js"></script>
+	<script type="text/javascript" src="js/hci-tracking.js"></script>
 
 	<link rel="stylesheet" type="text/css" href="http://yui.yahooapis.com/combo?2.7.0/build/editor/assets/skins/sam/simpleeditor.css&2.7.0/build/treeview/assets/skins/sam/treeview.css"> 
 	<script type="text/javascript" src="http://yui.yahooapis.com/combo?2.7.0/build/utilities/utilities.js&2.7.0/build/editor/simpleeditor-min.js&2.7.0/build/treeview/treeview-min.js"></script> 
@@ -88,6 +89,7 @@
 <div id="conn_info"></div>
 <div id="log"></div>
 <div id="plots"></div>
+<div id="log"></div>
 <script>
 
 function is_array(input){
@@ -178,6 +180,11 @@ $(document).ready(function () {
 	    if (state) {
 		var s = Math.round(Math.random()*1000000000);
 		$('#plots').append($('<div id="svg_' + s + '_cover">').append($('<h3>').text(id)).append($('<div id="svg_' + s + '">').svg()));
+		$('#plots').append($('<input type="text">').attr('id', 'svg_' + s + '_mult').val(1));
+		$('#svg_' + s + '_mult').keyup(function () {
+			$('#svg_' + s).data('mult', $(this).val());
+//			alert("mult = " + $(this).val());
+		});
 		var svg = $('#svg_'+s).svg('get');
 		var sv = $('#svg_'+s+ ' > svg');
 		sv.css('width',400);
@@ -195,6 +202,7 @@ $(document).ready(function () {
 	    } else {
 		var s = plot_divs[id];
 		$('#svg_'+s+'_cover').remove();
+		$('#svg_'+s+'_mult').remove();
 		$.post(url, {action: "remove_plot", varname: id}, function (data) {
 		
 		});
